@@ -1,0 +1,211 @@
+---
+title: "Homework04"
+output:
+  html_document:
+    theme: yeti
+    toc: yes
+    toc_float: yes
+  pdf_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+install.packages('tidyverse', repos = "http://cran.us.r-project.org")
+#install.packages('tidymodels', repos = "http://cran.us.r-project.org")
+install.packages('ggplot2', repos = "http://cran.us.r-project.org")
+install.packages('visdat', repos = "http://cran.us.r-project.org")
+install.packages("corrplot", repos = "http://cran.us.r-project.org")
+install.packages("discrim", repos = "http://cran.us.r-project.org")
+install.packages("rlang", repos = "http://cran.us.r-project.org")
+library(tidyverse)
+library(tidymodels)
+library(ggplot2)
+library(visdat)
+library(corrplot)
+library(discrim)
+library(klaR)
+library(yardstick)
+```
+
+```{r}
+set.seed(231)
+data = read.csv('data/titanic.csv')
+data$survived = factor(data$survived, levels = c('Yes', 'No'))
+data$pclass = factor(data$pclass)
+```
+
+
+## Question 1
+```{r}
+data_split = initial_split(data, prop = 0.70,
+                                strata = survived)
+titanic_train = training(data_split)
+titanic_test = testing(data_split)
+```
+
+```{r}
+print(c(dim(titanic_train), dim(titanic_test)))
+```
+
+
+## Question 2
+```{r}
+cv_folds <- vfold_cv(titanic_train, v = 10)
+```
+
+
+## Question 3
+   Cross Validation is a methodology to find the best parameter of models and reduce prediction error. 
+
+
+   At first, we divide the train set into 10 pieces(fold). The size of pieces are depend on the size of train set. This size indicates K. So this case is 10-fold cross validation. An one set of 10 folds is used as test set and the rest as a train. Then, make a model with 9 folds under the certain parameter value and predict the rest test folds. Repeat this for all remaining 9 folds. Calculate the mean MSE(or RMSE, accuracy, etc) under the certain parameter. We can draw a plot of parameters and scores and find the best parameter with the lowest MSE. 
+
+
+   It is more effective to make a model with the parameters found in this way, rather than simply fit and test with the entire train set. Bootstrap could be used with the entire train set. This method does not divide train set as CV, change the order of observation in it and make a difference.
+
+
+## Question 4
+```{r}
+#Recipe
+titanic_recipe = recipe(survived ~ pclass + sex + age + sib_sp + parch + fare, 
+                        data = titanic_train) %>%
+        step_impute_linear(age) %>%
+        step_dummy(all_nominal_predictors()) %>%
+        step_interact(terms = ~ starts_with("sex"):fare + age:fare)
+
+
+#Logistic
+log_reg = logistic_reg() %>% 
+        set_engine("glm") %>% 
+        set_mode("classification")
+
+log_wkflow = workflow() %>% 
+        add_model(log_reg) %>% 
+        add_recipe(titanic_recipe)
+
+log_fit = fit(log_wkflow, titanic_train)
+
+
+#LDA
+lda_mod = discrim_linear() %>%
+        set_engine("MASS") %>%
+        set_mode("classification")
+
+lda_wkflow = workflow() %>% 
+        add_model(lda_mod) %>% 
+        add_recipe(titanic_recipe)
+
+lda_fit = fit(lda_wkflow, titanic_train)
+
+
+#QDA
+qda_mod = discrim_quad() %>% 
+        set_mode("classification") %>% 
+        set_engine("MASS")
+
+qda_wkflow = workflow() %>% 
+        add_model(qda_mod) %>% 
+        add_recipe(titanic_recipe)
+
+qda_fit = fit(qda_wkflow, titanic_train)
+```
+3 models x 10 folds = 30 models
+
+
+## Question 5
+```{r}
+log_res = log_wkflow %>% 
+        fit_resamples(resamples = cv_folds, 
+                      metrics = metric_set(recall, precision, 
+                                           accuracy, sens, spec, roc_auc),
+                      control = control_resamples(save_pred = TRUE)) 
+
+lda_res = lda_wkflow %>%
+        fit_resamples(resamples = cv_folds,
+                      metrics = metric_set(recall, precision, 
+                                           accuracy, sens, spec, roc_auc),
+                      control = control_resamples(save_pred = TRUE))
+
+qda_res = qda_wkflow %>%
+        fit_resamples(resamples = cv_folds,
+                      metrics = metric_set(recall, precision, 
+                                           accuracy, sens, spec, roc_auc),
+                      control = control_resamples(save_pred = TRUE))
+```
+
+
+## Question 6
+```{r}
+collect_metrics(log_res)
+```
+```{r}
+collect_metrics(lda_res)
+```
+```{r}
+collect_metrics(qda_res)
+```
+   The logistic model performed the best. The mean accuracy is 0.82 and std is 0.01. It indicates, the accuracy of 10 folds is all close to the mean.
+
+
+## Question 7
+```{r}
+log_fit = fit(log_wkflow, titanic_train)
+```
+
+
+## Question 8
+```{r}
+predict(log_fit, new_data = titanic_test, type = "prob")
+```
+```{r}
+log_acc = augment(log_fit, new_data = titanic_test) %>%
+  accuracy(truth = survived, estimate = .pred_class)
+
+log_acc
+```
+
+
+## Question 9
+$Q = \sum_{i=1}^n (y_i-\hat{y_i})^2,\hat{y_i}=\beta$
+$\\$
+
+$Q = \sum_{i=1}^n (y_i-\beta)^2$
+$\\$
+
+$\leftrightarrow  \frac{d Q}{d \beta} = -2\sum_{i=1}^n (y_i-\beta) = 0$
+$\\$
+
+$\leftrightarrow  \sum_{i=1}^n y_i - n\beta = 0$
+$\\$
+
+$\leftrightarrow  n\beta = \sum_{i=1}^n y_i$
+$\\$
+
+$\leftrightarrow  \hat{\beta} = \frac{\sum_{i=1}^n y_i}{n} = \bar{y}$
+
+
+## Question 10
+  In the LOOCV, we make models with the same data points n times. This data points are affecting models n times repeatedly. If there is an outlier, it will make all individual $\beta$ values in models stand out in a similar direction. Therefore, a covariance between $\beta$ occurs.
+  
+  
+  Of course, we don't need to have outliers in the data to explain this. This is just to explain how data points in LOOCV are not completely independent, so they would be in a model that does not make much difference. 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
